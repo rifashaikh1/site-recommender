@@ -18,24 +18,53 @@ def valid_format(url):
     return validators.url(normalize_url(url))
 
 
+
 def site_live(url):
-    """
-    Checks if website is reachable
-    """
-    try:
-        url = normalize_url(url)
+    
+    if not url.startswith(("http://","https://")):
+        urls = [
+            "https://" + url,
+            "http://" + url
+        ]
+    else:
+        urls = [url]
 
-        response = requests.get(
-            url,
-            timeout=5,
-            allow_redirects=True,
-            headers={
-                "User-Agent":
-                "Mozilla/5.0"
-            }
-        )
+    headers = {
+        "User-Agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+    }
 
-        return response.status_code < 400
+    for u in urls:
 
-    except:
-        return False
+        try:
+            # try HEAD first
+            r = requests.head(
+                u,
+                allow_redirects=True,
+                timeout=5,
+                headers=headers
+            )
+
+            # treat even 403 as live
+            if r.status_code < 500:
+                return True
+
+        except:
+            pass
+
+        try:
+            # fallback GET
+            r = requests.get(
+                u,
+                allow_redirects=True,
+                timeout=5,
+                headers=headers
+            )
+
+            if r.status_code < 500:
+                return True
+
+        except:
+            pass
+
+    return False
