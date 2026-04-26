@@ -2,16 +2,18 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from similarity import find_similar_websites
 
-app = FastAPI(title="Website Recommendation API")
+app = FastAPI(
+    title="Website Recommender API"
+)
 
 # allow frontend calls
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # can restrict later
-    allow_credentials=True,
+    allow_origins=["*"],   # tighten later if needed
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 @app.get("/")
 def home():
@@ -31,14 +33,17 @@ def recommend(
         user_category=category
     )
 
-    if isinstance(results,str):
+    if "Message" in results.columns:
         return {
-            "error":results
+            "status":"error",
+            "message":
+             results["Message"].iloc[0]
         }
 
     return {
+        "status":"success",
         "recommendations":
-        results.to_dict(
-            orient="records"
-        )
+            results.to_dict(
+                orient="records"
+            )
     }
