@@ -1,97 +1,285 @@
 import pandas as pd
 import numpy as np
-from sentence_transformers import SentenceTransformer
-from sklearn.neighbors import KNeighborsClassifier
-from sklearn.preprocessing import LabelEncoder
-from sklearn.metrics.pairwise import cosine_similarity
 import requests
-from bs4 import BeautifulSoup
-import os
-from validators_utils import valid_format, site_live
+import re
 
+from bs4 import BeautifulSoup
+from sentence_transformers import SentenceTransformer
+from sklearn.metrics.pairwise import cosine_similarity
+
+# -----------------------------
 # Paths
+# -----------------------------
 DATA_PATH = "data/website_classification.csv"
 EMBED_PATH = "embeddings/dataset_embeddings.npy"
 
-# Load dataset & embeddings
+# -----------------------------
+# Load dataset
+# -----------------------------
 df = pd.read_csv(DATA_PATH)
 embeddings = np.load(EMBED_PATH)
 
-# Prepare text
-if 'cleaned_website_text' in df.columns:
-    df['text'] = df['cleaned_website_text']
-    df['text'] = df['text'].str.lower()
-else:
-    # fallback (just use URL)
-    df['text'] = df['website_url'].str.replace(r'\.com|\.org|\.net', '', regex=True)
-    df['text'] = df['text'].str.replace(r'[^a-zA-Z0-9 ]', ' ', regex=True)
+TEXT_COL = "cleaned_website_text"
+URL_COL = "website_url"
+CATEGORY_COL = "Category"
 
-# Load embedding model
-model = SentenceTransformer('all-mpnet-base-v2')
+# -----------------------------
+# Embedding model
+# MUST match preprocess.py
+# -----------------------------
+model = SentenceTransformer("all-MiniLM-L6-v2")
 
-# Label encoding for categories
-le = LabelEncoder()
-df['Category_encoded'] = le.fit_transform(df['Category'])
 
-# Train small KNN classifier for category detection
-knn = KNeighborsClassifier(n_neighbors=3)
-knn.fit(embeddings, df['Category_encoded'])
+# =============================
+# URL cleaning
+# =============================
+def clean_url(url):
+    url = url.lower().strip()
 
-# Scrape website for text
+    url = url.replace("https://","").replace("http://","")
+    url = url.replace("www.","")
+    url = url.split("/")[0]
+
+    return url
+
+
+# =============================
+# Detect nonsense domains
+# =============================
+def is_gibberish_domain(domain):
+    name = domain.split(".")[0]
+
+    # too short nonsense
+    if len(name) < 5:
+        return True
+
+    vowels = sum(c in "aeiou" for c in name)
+
+    # suspicious random strings
+    if vowels == 0:
+        return True
+
+    if vowels / len(name) < 0.15:
+        return True
+
+    return False
+
+
+# =============================
+# Check reachable
+# =============================
+def fetch_page(url):
+    candidates = [
+        f"https://{clean_url(url)}",
+        f"http://{clean_url(url)}"
+    ]
+
+    for u in candidates:
+        try:
+            r = requests.get(
+                u,
+                timeout=6,
+                headers={
+                    "User-Agent":
+                    "Mozilla/5.0"
+                }
+            )
+
+            if r.status_code < 400:
+                return r.text
+
+        except:
+            pass
+
+    return None
+
+
+# =============================
+# parked domain detector
+# =============================
+def is_parked(html):
+    if not html:
+        return False
+
+    html = html.lower()
+
+    markers = [
+        "domain for sale",
+        "buy this domain",
+        "parked free",
+        "courtesy of godaddy",
+        "this domain is parked",
+        "parkingcrew"
+    ]
+
+    return any(x in html for x in markers)
+
+
+# =============================
+# scrape metadata
+# =============================
 def scrape_website(url):
+
+    html = fetch_page(url)
+
+    if not html:
+        return None
+
+    if is_parked(html):
+        return "PARKED"
+
     try:
-        response = requests.get("https://" + url, timeout=5)
-        soup = BeautifulSoup(response.text, 'html.parser')
+        soup = BeautifulSoup(
+            html,
+            "html.parser"
+        )
 
-        title = soup.title.string if soup.title else ''
+        title = (
+            soup.title.get_text(strip=True)
+            if soup.title else ""
+        )
 
-        description_tag = soup.find('meta', attrs={'name':'description'})
-        description = description_tag['content'] if description_tag else ''
+        desc = ""
 
-        paragraphs = soup.find_all('p')
-        content = " ".join([p.get_text() for p in paragraphs[:10]])
+        meta = soup.find(
+            "meta",
+            attrs={"name":"description"}
+        )
 
-        text = (url + " " + title + " " + description + " " + content).lower()
+        if meta:
+            desc = meta.get(
+                "content",""
+            )
 
-        return text
+        text = (title+" "+desc).strip()
+
+        return text if len(text)>5 else None
 
     except:
-        return url.lower()
-    
-# Predict category automatically
-def predict_category(text):
-    vec = model.encode([text])
-    
-    distances, indices = knn.kneighbors(vec)
-    
-    # average distance (lower = better)
-    avg_distance = distances.mean()
+        return None
 
-    cat_encoded = knn.predict(vec)[0]
-    category = le.inverse_transform([cat_encoded])[0]
 
-    return category, avg_distance
+# =============================
+# URL intent inference
+# only for meaningful dead URLs
+# =============================
+def infer_category_from_url(url):
 
-# Find similar websites
-def find_similar_websites(user_url, top_n=5, user_category=None):
+    url = clean_url(url)
 
-    # STEP 1 Validation
-    if not valid_format(user_url):
-        return "Invalid URL format"
+    if is_gibberish_domain(url):
+        return None
 
-    if not site_live(user_url):
-        return "Website inactive or unreachable"
-    
-    # Step 1: scrape better text
-    user_text = scrape_website(user_url).lower()
+    tokens = re.findall(
+        r"[a-z]+",
+        url.lower()
+    )
 
-    # Step 2: encode user
-    user_vec = model.encode([user_text])
+    token_text = " ".join(tokens)
 
-    # Step 3: use FULL dataset (no category filtering)
-    similarities = cosine_similarity(user_vec, embeddings)[0]
+    keyword_map = {
+        "Travel":[
+            "travel","trip","flight",
+            "hotel","booking","tour"
+        ],
 
-    # Step 4: get top matches
-    top_indices = similarities.argsort()[-top_n:][::-1]
+        "E-Commerce":[
+            "shop","store","sale",
+            "fashion","clearance",
+            "buy","cart"
+        ],
 
-    return df.iloc[top_indices][['website_url', 'Category']]
+        "News":[
+            "news","times",
+            "journal","media"
+        ],
+
+        "Computers and Technology":[
+            "tech","cloud",
+            "software","code"
+        ]
+    }
+
+    for cat,words in keyword_map.items():
+
+        if any(
+            w in token_text
+            for w in words
+        ):
+            return cat
+
+    return None
+
+
+# =============================
+# Recommend
+# =============================
+def find_similar_websites(
+    user_url,
+    top_n=5,
+    user_category=None
+):
+
+    scraped = scrape_website(user_url)
+
+    # parked domains -> reject
+    if scraped == "PARKED":
+        return pd.DataFrame({
+            "Message":[
+                "Parked/placeholder domain. No recommendations."
+            ]
+        })
+
+    # reachable real site
+    if scraped:
+
+        user_vec = model.encode(
+            [scraped]
+        )
+
+        sims = cosine_similarity(
+            user_vec,
+            embeddings
+        )[0]
+
+        top_idx = sims.argsort()[
+            -top_n:
+        ][::-1]
+
+        return df.iloc[
+            top_idx
+        ][
+            [URL_COL,CATEGORY_COL]
+        ]
+
+
+    # dead site -> try url inference
+    if not user_category:
+        user_category = infer_category_from_url(
+            user_url
+        )
+
+    if not user_category:
+        return pd.DataFrame({
+            "Message":[
+             "Invalid or meaningless domain. No recommendations."
+            ]
+        })
+
+
+    filtered = df[
+        df[CATEGORY_COL]==user_category
+    ]
+
+    if len(filtered)==0:
+        return pd.DataFrame({
+            "Message":[
+             "No matches found."
+            ]
+        })
+
+    return filtered.sample(
+        min(top_n,len(filtered))
+    )[
+       [URL_COL,CATEGORY_COL]
+    ]

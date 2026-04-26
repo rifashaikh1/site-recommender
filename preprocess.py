@@ -26,7 +26,7 @@ else:
     df['text'] = df['text'].str.replace(r'[^a-zA-Z0-9 ]', ' ', regex=True)
 
 # Load embedding model
-model = SentenceTransformer('all-mpnet-base-v2')
+model = SentenceTransformer('all-MiniLM-L6-v2')
 
 # Precompute embeddings
 print("Encoding dataset texts...")

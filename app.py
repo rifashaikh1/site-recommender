@@ -1,22 +1,28 @@
 import streamlit as st
 from similarity import find_similar_websites
 
+
 st.set_page_config(
     page_title="Website Suggester",
     layout="centered"
 )
 
 st.title("Website Suggester 🔍")
-st.write("Enter a website URL to discover similar websites.")
 
-# User URL input
+
+# -------------------
+# Input URL
+# -------------------
 user_url = st.text_input(
-    "Enter website URL (e.g., example.com)"
+    "Enter website URL"
 )
 
-# Optional category selection
+
+# -------------------
+# Optional category
+# -------------------
 user_category = st.selectbox(
-    "Select category (optional, leave blank to auto-detect)",
+    "Select category (optional)",
     [
         ""
     ] + [
@@ -39,27 +45,41 @@ user_category = st.selectbox(
     ]
 )
 
-# Convert blank to None
-user_category = None if user_category == "" else user_category
+user_category = (
+    None if user_category == ""
+    else user_category
+)
 
 
+# -------------------
+# Search button
+# -------------------
 if st.button("Find Similar Websites"):
 
-    if not user_url.strip():
-        st.warning("Please enter a website URL")
+    if not user_url:
+        st.warning("Enter website URL")
 
     else:
-        with st.spinner("Validating and searching..."):
+
+        with st.spinner("Searching..."):
             results = find_similar_websites(
                 user_url,
                 user_category=user_category
             )
 
-        # If function returned an error message
-        if isinstance(results, str):
-            st.error(results)
+        # Handle invalid/parked/gibberish cases
+        if "Message" in results.columns:
+            st.warning(
+                results["Message"].iloc[0]
+            )
 
-        # If recommendations returned
+        # Normal recommendations
         else:
-            st.success("Top similar websites:")
-            st.table(results)
+            st.success(
+                "Top similar websites:"
+            )
+            st.table(
+                results.reset_index(
+                    drop=True
+                )
+            )

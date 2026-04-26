@@ -1,26 +1,20 @@
 import requests
 import validators
+import re
 
 
 def normalize_url(url):
-    """
-    Add https:// if user entered just domain
-    """
     if not url.startswith(("http://", "https://")):
         url = "https://" + url
     return url
 
 
 def valid_format(url):
-    """
-    Checks if URL format is valid
-    """
     return validators.url(normalize_url(url))
 
 
-
 def site_live(url):
-    
+
     if not url.startswith(("http://","https://")):
         urls = [
             "https://" + url,
@@ -31,21 +25,19 @@ def site_live(url):
 
     headers = {
         "User-Agent":
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+        "Mozilla/5.0"
     }
 
     for u in urls:
 
         try:
-            # try HEAD first
             r = requests.head(
                 u,
-                allow_redirects=True,
                 timeout=5,
+                allow_redirects=True,
                 headers=headers
             )
 
-            # treat even 403 as live
             if r.status_code < 500:
                 return True
 
@@ -53,11 +45,10 @@ def site_live(url):
             pass
 
         try:
-            # fallback GET
             r = requests.get(
                 u,
-                allow_redirects=True,
                 timeout=5,
+                allow_redirects=True,
                 headers=headers
             )
 
@@ -68,3 +59,77 @@ def site_live(url):
             pass
 
     return False
+
+
+def check_parked_domain(url):
+
+    url = normalize_url(url)
+
+    try:
+        r = requests.get(
+            url,
+            timeout=5,
+            headers={
+                "User-Agent":
+                "Mozilla/5.0"
+            }
+        )
+
+        html = r.text.lower()
+
+        parked_markers = [
+            "domain for sale",
+            "buy this domain",
+            "parked free",
+            "courtesy of godaddy",
+            "this domain is parked",
+            "coming soon"
+            "parking"
+        ]
+
+        if any(marker in html for marker in parked_markers):
+            return True
+
+        return False
+
+    except:
+        return False
+
+
+def gibberish_domain(url):
+
+    domain = (
+        url.replace("https://","")
+           .replace("http://","")
+           .split("/")[0]
+           .split(".")[0]
+    )
+
+    vowels = len(
+        re.findall(
+            r"[aeiou]",
+            domain.lower()
+        )
+    )
+
+    if len(domain) > 6 and vowels <= 1:
+        return True
+
+    return False
+
+
+def domain_to_keywords(url):
+
+    domain = (
+        url.replace("https://","")
+           .replace("http://","")
+           .split("/")[0]
+    )
+
+    text = re.sub(
+        r'[^a-zA-Z]',
+        ' ',
+        domain
+    )
+
+    return text.lower()
