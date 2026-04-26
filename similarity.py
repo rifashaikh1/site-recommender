@@ -7,6 +7,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 import requests
 from bs4 import BeautifulSoup
 import os
+from validators_utils import valid_format, site_live
 
 # Paths
 DATA_PATH = "data/website_classification.csv"
@@ -73,6 +74,14 @@ def predict_category(text):
 
 # Find similar websites
 def find_similar_websites(user_url, top_n=5, user_category=None):
+
+    # STEP 1 Validation
+    if not valid_format(user_url):
+        return "Invalid URL format"
+
+    if not site_live(user_url):
+        return "Website inactive or unreachable"
+    
     # Step 1: scrape better text
     user_text = scrape_website(user_url).lower()
 
